@@ -26,16 +26,30 @@ ensure_hidg_dev() {
     [ -c /dev/hidg0 ] && chmod 660 /dev/hidg0
 }
 
+WANT_ADB=0
+case "${KEEP_ADB:-1}" in
+    1|auto)
+        if [ -d "$G1/functions/ffs.adb" ] && is_usb_adb_enabled; then
+            WANT_ADB=1
+        fi
+        ;;
+esac
+
 HID_LINKED=0
+ADB_LINKED=0
+OTHER_LINKED=0
 for f in "$CFG"/f*; do
     [ -L "$f" ] || continue
     case "$($BB readlink "$f" 2>/dev/null)" in
         *hid.usb0) HID_LINKED=1 ;;
+        *ffs.adb) ADB_LINKED=1 ;;
+        *) OTHER_LINKED=1 ;;
     esac
 done
 CUR_BM="$($BB cat "$CFG/bmAttributes" 2>/dev/null)"
+CUR_UDC="$($BB cat "$G1/UDC" 2>/dev/null)"
 
-if [ "$HID_LINKED" = "1" ] && [ "$CUR_BM" = "0xa0" ]; then
+if [ "$HID_LINKED" = "1" ] && [ "$ADB_LINKED" = "$WANT_ADB" ] && [ "$OTHER_LINKED" = "0" ] && [ "$CUR_BM" = "0xa0" ] && [ "$CUR_UDC" = "$UDC" ]; then
     ensure_hidg_dev
     if [ -c /dev/hidg0 ]; then
         exit 0
@@ -61,8 +75,21 @@ echo "$DESC_B64" | $BB base64 -d > "$HID_DIR/report_desc"
 # Enable Remote Wakeup bit (0x80 | 0x20 = 0xa0)
 echo 0xa0 > "$CFG/bmAttributes"
 
-if [ "${KEEP_ADB:-1}" = "1" ] && [ -d "$G1/functions/ffs.adb" ]; then
-    [ -L "$CFG/f1" ] || ln -s "$G1/functions/ffs.adb" "$CFG/f1"
+# If Android init rebound UDC while hid.usb0 was unlinked, unbind again before linking
+PRE_LINK_UDC="$($BB cat "$G1/UDC" 2>/dev/null)"
+if [ -n "$PRE_LINK_UDC" ]; then
+    echo "" > "$G1/UDC" 2>/dev/null || true
+    $BB usleep 50000
+fi
+
+if [ "$WANT_ADB" = "1" ]; then
+    case "$($BB readlink "$CFG/f1" 2>/dev/null)" in
+        *ffs.adb) ;;
+        *)
+            rm -f "$CFG/f1"
+            ln -s "$G1/functions/ffs.adb" "$CFG/f1"
+            ;;
+    esac
     rm -f "$CFG/f2"
     ln -s "$HID_DIR" "$CFG/f2"
 else
@@ -72,7 +99,7 @@ else
     ln -s "$HID_DIR" "$CFG/f1"
 fi
 
-# Rebind only if Android init has not already rebound UDC
+# Rebind only if Android init has not already rebound UDC after links were created
 CUR_UDC="$($BB cat "$G1/UDC" 2>/dev/null)"
 if [ "$CUR_UDC" != "$UDC" ]; then
     echo "$UDC" > "$G1/UDC" 2>/dev/null || true
@@ -81,7 +108,7 @@ $BB usleep 300000
 
 ensure_hidg_dev
 
-if [ "${KEEP_ADB:-1}" = "1" ]; then
+if [ "$WANT_ADB" = "1" ]; then
     if ! $BB pgrep -x adbd >/dev/null 2>&1; then
         setprop ctl.start adbd
     fi

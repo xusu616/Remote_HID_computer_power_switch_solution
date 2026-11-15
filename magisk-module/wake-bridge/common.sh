@@ -51,3 +51,19 @@ detect_usb_cfg() {
     done
     return 1
 }
+
+is_usb_adb_enabled() {
+    local adb_setting cfg
+    adb_setting="$(settings get global adb_enabled 2>/dev/null)"
+    [ -n "$BB" ] && adb_setting="$(printf '%s' "$adb_setting" | $BB tr -d ' \t\r\n')"
+    case "$adb_setting" in
+        1) return 0 ;;
+        0) return 1 ;;
+    esac
+    for cfg in "$(getprop sys.usb.config 2>/dev/null)" "$(getprop persist.sys.usb.config 2>/dev/null)"; do
+        case ",$cfg," in
+            *,adb,*) return 0 ;;
+        esac
+    done
+    return 1
+}
