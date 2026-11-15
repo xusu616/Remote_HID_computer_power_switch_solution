@@ -1,0 +1,9 @@
+# Build artifacts & local temp
+build/
+dist/
+*.zip
+*.log
+*.tmp
+*.pid
+local-only/
+config.env

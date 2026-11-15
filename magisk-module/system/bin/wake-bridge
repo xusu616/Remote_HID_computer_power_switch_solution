@@ -1,0 +1,65 @@
+#!/system/bin/sh
+MOD_DIR="/data/adb/modules/wake_bridge"
+MOD_WAKE_DIR="$MOD_DIR/wake-bridge"
+[ -d "$MOD_WAKE_DIR" ] || { echo "wake_bridge module directory not found: $MOD_WAKE_DIR"; exit 1; }
+
+. "$MOD_WAKE_DIR/common.sh"
+load_config
+
+print_urls() {
+    PORT="${PORT:-9876}"
+    TUN_IP="$(ip -4 -br addr 2>/dev/null | $BB awk '/^tun/ {sub(/\/.*/,"",$3); print $3; exit}')"
+    WLAN_IP="$(ip -4 -br addr 2>/dev/null | $BB awk '/^wlan/ {sub(/\/.*/,"",$3); print $3; exit}')"
+    [ -n "$TUN_IP" ] && {
+        echo "Tailscale status: http://$TUN_IP:$PORT/cgi-bin/status?token=$TOKEN"
+        echo "Tailscale wake:   http://$TUN_IP:$PORT/cgi-bin/wake?token=$TOKEN"
+    }
+    [ -n "$WLAN_IP" ] && {
+        echo "LAN status:       http://$WLAN_IP:$PORT/cgi-bin/status?token=$TOKEN"
+        echo "LAN wake:         http://$WLAN_IP:$PORT/cgi-bin/wake?token=$TOKEN"
+    }
+    echo "Local status:     http://127.0.0.1:$PORT/cgi-bin/status?token=$TOKEN"
+}
+
+case "$1" in
+    url)
+        print_urls
+        ;;
+    wake)
+        "$MOD_WAKE_DIR/wake.sh"
+        ;;
+    hid)
+        "$MOD_WAKE_DIR/setup-hid.sh"
+        ls -la /dev/hidg0 2>/dev/null || echo "/dev/hidg0 missing"
+        ;;
+    start)
+        "$MOD_WAKE_DIR/start-daemon.sh"
+        echo "started"
+        ;;
+    stop)
+        "$MOD_WAKE_DIR/stop-daemon.sh"
+        echo "stopped"
+        ;;
+    restart)
+        "$MOD_WAKE_DIR/start-daemon.sh"
+        echo "restarted"
+        ;;
+    status|"")
+        UDC="$(detect_udc)"
+        CFG="$(detect_usb_cfg)"
+        echo "UDC:          $UDC"
+        echo "USB state:    $($BB cat "/sys/class/udc/$UDC/state" 2>/dev/null)"
+        echo "bmAttributes: $($BB cat "$CFG/bmAttributes" 2>/dev/null)"
+        if [ -c /dev/hidg0 ]; then echo "hidg0:        present"; else echo "hidg0:        missing"; fi
+        if [ -f "$DATA_DIR/httpd.pid" ] && kill -0 "$($BB cat "$DATA_DIR/httpd.pid" 2>/dev/null)" 2>/dev/null; then
+            echo "httpd PID:    $($BB cat "$DATA_DIR/httpd.pid")"
+        else
+            echo "httpd PID:    not running"
+        fi
+        print_urls
+        ;;
+    *)
+        echo "Usage: wake-bridge {status|url|wake|hid|start|stop|restart}"
+        exit 1
+        ;;
+esac

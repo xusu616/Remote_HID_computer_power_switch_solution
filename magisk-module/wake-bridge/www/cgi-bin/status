@@ -1,0 +1,19 @@
+#!/system/bin/sh
+MOD_WAKE_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
+. "$MOD_WAKE_DIR/cgi-auth.sh"
+check_auth
+UDC="$(detect_udc)"
+CFG="$(detect_usb_cfg)"
+$BB printf "Content-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\n\r\n"
+echo "time=$($BB date "+%Y-%m-%d %H:%M:%S")"
+echo "udc=$UDC"
+echo "usb_state=$($BB cat "/sys/class/udc/$UDC/state" 2>/dev/null)"
+echo "bmAttributes=$($BB cat "$CFG/bmAttributes" 2>/dev/null)"
+if [ -c /dev/hidg0 ]; then echo "hidg0=present"; else echo "hidg0=missing"; fi
+echo "battery_capacity=$($BB cat /sys/class/power_supply/battery/capacity 2>/dev/null)%"
+echo "charging_enabled=$($BB cat /sys/class/power_supply/battery/charging_enabled 2>/dev/null)"
+echo "battery_status=$($BB cat /sys/class/power_supply/battery/status 2>/dev/null)"
+echo "--- network ---"
+ip -br addr 2>/dev/null | $BB grep -E "^(wlan|tun)" || true
+echo "--- recent wake.log ---"
+$BB tail -n 10 "$DATA_DIR/wake.log" 2>/dev/null || echo "(empty)"

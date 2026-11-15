@@ -1,0 +1,8 @@
+#!/system/bin/sh
+MOD_WAKE_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
+. "$MOD_WAKE_DIR/cgi-auth.sh"
+check_auth
+$BB printf "Content-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\n\r\n"
+echo "[wake-bridge] triggered from $REMOTE_ADDR"
+"$MOD_WAKE_DIR/wake.sh"
+echo "battery_capacity=$($BB cat /sys/class/power_supply/battery/capacity 2>/dev/null)%"
