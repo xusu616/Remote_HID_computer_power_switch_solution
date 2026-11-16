@@ -67,3 +67,20 @@ is_usb_adb_enabled() {
     done
     return 1
 }
+
+want_adb_in_gadget() {
+    local g1="/config/usb_gadget/g1"
+    case "${KEEP_ADB:-0}" in
+        1|auto)
+            [ -d "$g1/functions/ffs.adb" ] && is_usb_adb_enabled && return 0
+            ;;
+    esac
+    return 1
+}
+
+write_hid_b64() {
+    local b64="$1"
+    local timeout_secs="${2:-1}"
+    [ -c /dev/hidg0 ] || return 1
+    $BB timeout "$timeout_secs" $BB sh -c "echo '$b64' | $BB base64 -d > /dev/hidg0" 2>/dev/null
+}

@@ -16,6 +16,7 @@ EXEC_FILES = {
     "system/bin/wake-bridge",
     "wake-bridge/setup-hid.sh",
     "wake-bridge/wake.sh",
+    "wake-bridge/hid-watchdog.sh",
     "wake-bridge/start-daemon.sh",
     "wake-bridge/stop-daemon.sh",
     "wake-bridge/www/cgi-bin/wake",
