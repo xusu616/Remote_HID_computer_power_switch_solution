@@ -29,7 +29,7 @@ case "$1" in
         "$MOD_WAKE_DIR/wake.sh"
         ;;
     hid)
-        "$MOD_WAKE_DIR/setup-hid.sh"
+        "$MOD_WAKE_DIR/setup-hid.sh" "$2"
         ls -la /dev/hidg0 2>/dev/null || echo "/dev/hidg0 missing"
         ;;
     start)
@@ -50,16 +50,22 @@ case "$1" in
         echo "UDC:          $UDC"
         echo "USB state:    $($BB cat "/sys/class/udc/$UDC/state" 2>/dev/null)"
         echo "bmAttributes: $($BB cat "$CFG/bmAttributes" 2>/dev/null)"
+        echo "KEEP_ADB:     ${KEEP_ADB:-0}"
         if [ -c /dev/hidg0 ]; then echo "hidg0:        present"; else echo "hidg0:        missing"; fi
         if [ -f "$DATA_DIR/httpd.pid" ] && kill -0 "$($BB cat "$DATA_DIR/httpd.pid" 2>/dev/null)" 2>/dev/null; then
             echo "httpd PID:    $($BB cat "$DATA_DIR/httpd.pid")"
         else
             echo "httpd PID:    not running"
         fi
+        if [ -f "$DATA_DIR/watchdog.pid" ] && kill -0 "$($BB cat "$DATA_DIR/watchdog.pid" 2>/dev/null)" 2>/dev/null; then
+            echo "watchdog PID: $($BB cat "$DATA_DIR/watchdog.pid")"
+        else
+            echo "watchdog PID: not running"
+        fi
         print_urls
         ;;
     *)
-        echo "Usage: wake-bridge {status|url|wake|hid|start|stop|restart}"
+        echo "Usage: wake-bridge {status|url|wake|hid [--force]|start|stop|restart}"
         exit 1
         ;;
 esac

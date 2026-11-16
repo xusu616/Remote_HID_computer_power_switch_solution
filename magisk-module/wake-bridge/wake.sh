@@ -11,25 +11,36 @@ SOFT_CONN="/sys/class/udc/$UDC/soft_connect"
 
 echo "wake_bridge_trigger" > /sys/power/wake_lock 2>/dev/null
 
-if [ ! -c /dev/hidg0 ]; then
-    "$MOD_WAKE_DIR/setup-hid.sh" >/dev/null 2>&1
-fi
+# Always fast-verify gadget configfs state before waking
+"$MOD_WAKE_DIR/setup-hid.sh" >/dev/null 2>&1 || true
 
 STATE_BEFORE="$($BB cat "$STATE_FILE" 2>/dev/null || echo unknown)"
 HID_STATUS="skipped"
 SOFT_STATUS="not_needed"
 
-send_lshift_cmd="echo AgAAAAAAAAA= | $BB base64 -d > /dev/hidg0 && $BB usleep 150000 && echo AAAAAAAAAAA= | $BB base64 -d > /dev/hidg0"
+send_lshift() {
+    write_hid_b64 "AgAAAAAAAAA=" 2 && $BB usleep 150000 && write_hid_b64 "AAAAAAAAAAA=" 2
+}
 
 # Send Left Shift press & release (safe even if host is already awake)
 if [ -c /dev/hidg0 ]; then
-    if $BB timeout 2 $BB sh -c "$send_lshift_cmd" 2>/dev/null; then
+    if send_lshift; then
         HID_STATUS="ok"
     else
         HID_STATUS="write_failed_or_suspended"
     fi
 else
     HID_STATUS="no_hidg0"
+fi
+
+# If USB is configured while host is awake yet HID write failed, UDC was likely bound without hid.usb0
+if [ "$STATE_BEFORE" = "configured" ] && [ "$HID_STATUS" != "ok" ]; then
+    "$MOD_WAKE_DIR/setup-hid.sh" --force >/dev/null 2>&1 || true
+    $BB sleep 1
+    SOFT_STATUS="rebound_hid"
+    if send_lshift; then
+        HID_STATUS="ok"
+    fi
 fi
 
 $BB sleep 2
@@ -43,9 +54,7 @@ if [ "$STATE_MID" = "suspended" ]; then
         echo connect > "$SOFT_CONN" 2>/dev/null
         $BB sleep 2
         SOFT_STATUS="reconnected"
-        if [ -c /dev/hidg0 ]; then
-            $BB timeout 2 $BB sh -c "$send_lshift_cmd" 2>/dev/null || true
-        fi
+        send_lshift || true
     else
         SOFT_STATUS="soft_connect_unavailable"
     fi
