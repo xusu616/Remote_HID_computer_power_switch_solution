@@ -29,8 +29,24 @@ case "$1" in
         "$MOD_WAKE_DIR/wake.sh"
         ;;
     hid)
-        "$MOD_WAKE_DIR/setup-hid.sh" "$2"
+        "$MOD_WAKE_DIR/setup-hid.sh" "$2" "$3"
         ls -la /dev/hidg0 2>/dev/null || echo "/dev/hidg0 missing"
+        ;;
+    adb)
+        if [ -z "$2" ]; then
+            echo "Current KEEP_ADB: $(keep_adb_label "${KEEP_ADB:-0}")"
+            echo "Usage: wake-bridge adb {0|1|2|off|usb|wireless}"
+            exit 0
+        fi
+        NEW_ADB="$(normalize_keep_adb "$2")"
+        if $BB grep -q '^KEEP_ADB=' "$DATA_DIR/config.env" 2>/dev/null; then
+            $BB sed -i "s/^KEEP_ADB=.*/KEEP_ADB=$NEW_ADB/" "$DATA_DIR/config.env"
+        else
+            echo "KEEP_ADB=$NEW_ADB" >> "$DATA_DIR/config.env"
+        fi
+        KEEP_ADB="$NEW_ADB"
+        echo "Updated KEEP_ADB: $(keep_adb_label "$NEW_ADB")"
+        "$MOD_WAKE_DIR/setup-hid.sh" --force
         ;;
     start)
         "$MOD_WAKE_DIR/start-daemon.sh"
@@ -50,7 +66,7 @@ case "$1" in
         echo "UDC:          $UDC"
         echo "USB state:    $($BB cat "/sys/class/udc/$UDC/state" 2>/dev/null)"
         echo "bmAttributes: $($BB cat "$CFG/bmAttributes" 2>/dev/null)"
-        echo "KEEP_ADB:     ${KEEP_ADB:-0}"
+        echo "KEEP_ADB:     $(keep_adb_label "${KEEP_ADB:-0}")"
         if [ -c /dev/hidg0 ]; then echo "hidg0:        present"; else echo "hidg0:        missing"; fi
         if [ -f "$DATA_DIR/httpd.pid" ] && kill -0 "$($BB cat "$DATA_DIR/httpd.pid" 2>/dev/null)" 2>/dev/null; then
             echo "httpd PID:    $($BB cat "$DATA_DIR/httpd.pid")"
@@ -65,7 +81,7 @@ case "$1" in
         print_urls
         ;;
     *)
-        echo "Usage: wake-bridge {status|url|wake|hid [--force]|start|stop|restart}"
+        echo "Usage: wake-bridge {status|url|wake|hid [--force] [--hid-only]|adb [0|1|2|off|usb|wireless]|start|stop|restart}"
         exit 1
         ;;
 esac
