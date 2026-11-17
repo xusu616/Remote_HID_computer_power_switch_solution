@@ -1,6 +1,6 @@
 id=wake_bridge
 name=Remote HID Wake Bridge
-version=v1.0.6
-versionCode=106
+version=v1.0.7
+versionCode=107
 author=rD227
 description=Expose a rooted Android device as a Tailscale-reachable USB HID keyboard (+ USB soft_connect fallback) to wake suspended Linux/PC hosts.
