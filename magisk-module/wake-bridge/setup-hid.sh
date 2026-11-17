@@ -135,7 +135,7 @@ while [ "$ATTEMPT" -le 3 ]; do
     $BB usleep 100000
 
     if [ -f "$HID_DIR/no_out_endpoint" ]; then
-        echo 1 > "$HID_DIR/no_out_endpoint" 2>/dev/null || true
+        echo 0 > "$HID_DIR/no_out_endpoint" 2>/dev/null || true
     fi
     echo 1 > "$HID_DIR/protocol"
     echo 1 > "$HID_DIR/subclass"
@@ -175,7 +175,7 @@ while [ "$ATTEMPT" -le 3 ]; do
 done
 
 if [ "$WANT_ADB" = "1" ]; then
-    if ! $BB pgrep -x adbd >/dev/null 2>&1; then
+    if [ "$(getprop init.svc.adbd 2>/dev/null)" != "running" ] && ! $BB pgrep -x adbd >/dev/null 2>&1; then
         setprop ctl.start adbd
     fi
 fi
