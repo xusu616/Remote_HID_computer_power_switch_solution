@@ -46,8 +46,8 @@ fi
 $BB sleep 2
 STATE_MID="$($BB cat "$STATE_FILE" 2>/dev/null || echo unknown)"
 
-# Fallback: if host stayed suspended, trigger USB soft_connect re-enumeration
-if [ "$STATE_MID" = "suspended" ]; then
+# Fallback: if host stayed suspended or not attached, trigger USB soft_connect re-enumeration
+if [ "$STATE_MID" = "suspended" ] || [ "$STATE_MID" = "not attached" ]; then
     if [ -e "$SOFT_CONN" ]; then
         echo disconnect > "$SOFT_CONN" 2>/dev/null
         $BB sleep 1

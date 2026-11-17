@@ -10,8 +10,8 @@ esac
 
 G1="/config/usb_gadget/g1"
 HID_DIR="$G1/functions/hid.usb0"
-# Standard 63-byte USB HID Boot Keyboard report descriptor
-DESC_B64="BQEJBqEBBQcZ4CnnFQAlAXUBlQiBApUBdQiBAZUFdQEFCBkBKQWRApUBdQORAZUGdQgVACVlBQcZACllgQDA"
+# Standard 45-byte input-only USB HID Boot Keyboard report descriptor (no LED OUT report)
+DESC_B64="BQEJBqEBBQcZ4CnnFQAlAXUBlQiBApUBdQiBAZUGdQgVACVlBQcZACllgQDA"
 
 UDC="$(detect_udc)" || exit 1
 CFG="$(detect_usb_cfg)" || exit 1
@@ -134,6 +134,9 @@ while [ "$ATTEMPT" -le 3 ]; do
     echo "" > "$G1/UDC" 2>/dev/null || true
     $BB usleep 100000
 
+    if [ -f "$HID_DIR/no_out_endpoint" ]; then
+        echo 1 > "$HID_DIR/no_out_endpoint" 2>/dev/null || true
+    fi
     echo 1 > "$HID_DIR/protocol"
     echo 1 > "$HID_DIR/subclass"
     echo 8 > "$HID_DIR/report_length"
