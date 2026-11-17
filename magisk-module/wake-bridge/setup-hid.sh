@@ -4,9 +4,13 @@ MOD_WAKE_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 load_config
 
 FORCE=0
-case "$1" in
-    --force|-f) FORCE=1 ;;
-esac
+FORCE_HID_ONLY=0
+for arg in "$@"; do
+    case "$arg" in
+        --force|-f) FORCE=1 ;;
+        --hid-only) FORCE_HID_ONLY=1 ;;
+    esac
+done
 
 G1="/config/usb_gadget/g1"
 HID_DIR="$G1/functions/hid.usb0"
@@ -60,10 +64,42 @@ ensure_hidg_dev() {
     [ -c /dev/hidg0 ]
 }
 
+ADB_MODE="$(normalize_keep_adb "${KEEP_ADB:-0}")"
+if [ "$FORCE_HID_ONLY" = "1" ]; then
+    ADB_MODE="2"
+fi
+
 WANT_ADB=0
-if want_adb_in_gadget; then
+if [ "$ADB_MODE" = "1" ] && want_adb_in_gadget; then
     WANT_ADB=1
 fi
+
+ensure_ffs_adb_mounted() {
+    [ -e /dev/usb-ffs/adb/ep0 ] && return 0
+    mkdir -p /dev/usb-ffs/adb 2>/dev/null || true
+    mount -t functionfs adb /dev/usb-ffs/adb -o uid=2000,gid=2000 2>/dev/null || true
+    [ -e /dev/usb-ffs/adb/ep0 ]
+}
+
+wait_for_adbd_ffs_ready() {
+    local tries=0
+    if [ "$(getprop sys.usb.config 2>/dev/null)" != "adb" ]; then
+        setprop sys.usb.config adb 2>/dev/null || true
+    fi
+    if [ "$(getprop init.svc.adbd 2>/dev/null)" != "running" ] && ! $BB pgrep -x adbd >/dev/null 2>&1; then
+        setprop ctl.start adbd 2>/dev/null || true
+    fi
+    while [ "$tries" -lt 15 ]; do
+        if [ "$(getprop sys.usb.ffs.ready 2>/dev/null)" = "1" ]; then
+            # Allow init.usb.configfs.rc property trigger (if any) to settle
+            $BB usleep 50000
+            return 0
+        fi
+        $BB usleep 100000
+        tries=$((tries + 1))
+    done
+    return 1
+}
 
 is_gadget_ready() {
     local hid_linked=0 adb_linked=0 other_linked=0 cur_bm cur_udc f target
@@ -123,6 +159,20 @@ apply_gadget_links() {
 ATTEMPT=1
 SUCCESS=0
 while [ "$ATTEMPT" -le 3 ]; do
+    if [ "$WANT_ADB" = "1" ]; then
+        ensure_ffs_adb_mounted
+    elif [ "$ADB_MODE" = "2" ]; then
+        # Prevent init.usb.configfs.rc from stopping adbd or re-binding ffs.adb
+        setprop sys.usb.config hid 2>/dev/null || true
+        setprop sys.usb.state hid 2>/dev/null || true
+        if [ "$FORCE_HID_ONLY" = "0" ]; then
+            umount -l /dev/usb-ffs/adb 2>/dev/null || true
+        fi
+    else
+        setprop sys.usb.config none 2>/dev/null || true
+        setprop sys.usb.state none 2>/dev/null || true
+    fi
+
     # Unlink hid.usb0 before updating descriptors
     for f in "$CFG"/f*; do
         [ -L "$f" ] || continue
@@ -158,6 +208,14 @@ while [ "$ATTEMPT" -le 3 ]; do
         fi
     fi
 
+    if [ "$WANT_ADB" = "1" ]; then
+        # Start adbd and wait up to 1.5s for sys.usb.ffs.ready=1 BEFORE binding UDC
+        # so HID does not enumerate ahead of adbd and get reset mid-handshake.
+        wait_for_adbd_ffs_ready || true
+        [ -L "$CFG/f1" ] || ln -s "$G1/functions/ffs.adb" "$CFG/f1" 2>/dev/null || true
+        [ -L "$CFG/f2" ] || ln -s "$HID_DIR" "$CFG/f2" 2>/dev/null || true
+    fi
+
     echo 0xa0 > "$CFG/bmAttributes" 2>/dev/null || true
 
     if [ "$($BB cat "$G1/UDC" 2>/dev/null)" != "$UDC" ]; then
@@ -174,9 +232,13 @@ while [ "$ATTEMPT" -le 3 ]; do
     $BB usleep 200000
 done
 
-if [ "$WANT_ADB" = "1" ]; then
+if [ "$WANT_ADB" = "1" ] || [ "$ADB_MODE" = "2" ]; then
     if [ "$(getprop init.svc.adbd 2>/dev/null)" != "running" ] && ! $BB pgrep -x adbd >/dev/null 2>&1; then
-        setprop ctl.start adbd
+        setprop ctl.start adbd 2>/dev/null || true
+    fi
+elif [ "$ADB_MODE" = "0" ]; then
+    if [ "$(getprop init.svc.adbd 2>/dev/null)" = "running" ] || $BB pgrep -x adbd >/dev/null 2>&1; then
+        setprop ctl.stop adbd 2>/dev/null || true
     fi
 fi
 

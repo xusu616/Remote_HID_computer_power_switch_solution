@@ -68,10 +68,26 @@ is_usb_adb_enabled() {
     return 1
 }
 
+normalize_keep_adb() {
+    case "${1:-${KEEP_ADB:-0}}" in
+        1|auto|usb|on|true) echo "1" ;;
+        2|wireless|wifi) echo "2" ;;
+        *) echo "0" ;;
+    esac
+}
+
+keep_adb_label() {
+    case "$(normalize_keep_adb "${1:-${KEEP_ADB:-0}}")" in
+        1) echo "1 (composite wired + wireless ADB)" ;;
+        2) echo "2 (wireless-only ADB + pure USB HID)" ;;
+        *) echo "0 (HID-only, ADB disabled)" ;;
+    esac
+}
+
 want_adb_in_gadget() {
     local g1="/config/usb_gadget/g1"
-    case "${KEEP_ADB:-0}" in
-        1|auto)
+    case "$(normalize_keep_adb "${KEEP_ADB:-0}")" in
+        1)
             [ -d "$g1/functions/ffs.adb" ] && is_usb_adb_enabled && return 0
             ;;
     esac

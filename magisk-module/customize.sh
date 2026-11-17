@@ -27,8 +27,10 @@ fi
 mkdir -p "$DATA_DIR"
 chmod 700 "$DATA_DIR"
 
-choose_keep_adb() {
+choose_vol_key() {
     local default_val="$1"
+    local up_val="${2:-1}"
+    local down_val="${3:-0}"
     local fifo_base="${TMPDIR:-/dev}"
     local fifo="$fifo_base/.wake_bridge_key_$$"
     local res="" ge_pid timer_pid line
@@ -60,11 +62,11 @@ choose_keep_adb() {
     while IFS= read -r line <&3; do
         case "$line" in
             *KEY_VOLUMEUP*DOWN*|*KEY_VOLUMEUP*00000001*)
-                res="1"
+                res="$up_val"
                 break
                 ;;
             *KEY_VOLUMEDOWN*DOWN*|*KEY_VOLUMEDOWN*00000001*)
-                res="0"
+                res="$down_val"
                 break
                 ;;
         esac
@@ -86,21 +88,36 @@ DEFAULT_KEEP_ADB="0"
 if [ -f "$DATA_DIR/config.env" ]; then
     IS_UPGRADE=1
     load_config
-    DEFAULT_KEEP_ADB="${KEEP_ADB:-0}"
+    DEFAULT_KEEP_ADB="$(normalize_keep_adb "${KEEP_ADB:-0}")"
 fi
 
+STEP1_DEFAULT="0"
+[ "$DEFAULT_KEEP_ADB" != "0" ] && STEP1_DEFAULT="1"
+
 ui_print " "
-ui_print "- USB Gadget ADB mode selection (8s timeout):"
-ui_print "  [Vol+] Keep USB ADB alongside HID (KEEP_ADB=1)"
-ui_print "  [Vol-] HID-only mode, recommended (KEEP_ADB=0)"
+ui_print "- Step 1/2: Keep ADB debugging? (8s timeout):"
+ui_print "  [Vol+] Keep ADB (select Wired+Wireless or Wireless-only next)"
+ui_print "  [Vol-] Disable all ADB, pure USB HID only (KEEP_ADB=0)"
 if [ "$IS_UPGRADE" = "1" ]; then
-    ui_print "  (Timeout keeps existing setting: KEEP_ADB=$DEFAULT_KEEP_ADB)"
+    ui_print "  (Timeout keeps existing setting: $(keep_adb_label "$DEFAULT_KEEP_ADB"))"
 else
     ui_print "  (Timeout defaults to HID-only: KEEP_ADB=0)"
 fi
 
-SELECTED_KEEP_ADB="$(choose_keep_adb "$DEFAULT_KEEP_ADB")"
-ui_print "  -> Selected: KEEP_ADB=$SELECTED_KEEP_ADB"
+KEEP_ADB_ENABLED="$(choose_vol_key "$STEP1_DEFAULT" "1" "0")"
+if [ "$KEEP_ADB_ENABLED" = "1" ]; then
+    STEP2_DEFAULT="1"
+    [ "$DEFAULT_KEEP_ADB" = "2" ] && STEP2_DEFAULT="2"
+    ui_print " "
+    ui_print "- Step 2/2: Select ADB mode (8s timeout):"
+    ui_print "  [Vol+] Composite Wired USB + Wireless ADB + HID (KEEP_ADB=1)"
+    ui_print "  [Vol-] Wireless-only ADB + Pure Wired USB HID (KEEP_ADB=2)"
+    ui_print "  (Timeout defaults to: $(keep_adb_label "$STEP2_DEFAULT"))"
+    SELECTED_KEEP_ADB="$(choose_vol_key "$STEP2_DEFAULT" "1" "2")"
+else
+    SELECTED_KEEP_ADB="0"
+fi
+ui_print "  -> Selected: KEEP_ADB=$(keep_adb_label "$SELECTED_KEEP_ADB")"
 
 if [ "$IS_UPGRADE" = "0" ]; then
     RAND_TOKEN="$($BB dd if=/dev/urandom bs=12 count=1 2>/dev/null | $BB od -An -tx1 | $BB tr -d ' \n\r')"
