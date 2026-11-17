@@ -162,12 +162,11 @@ while [ "$ATTEMPT" -le 3 ]; do
     if [ "$WANT_ADB" = "1" ]; then
         ensure_ffs_adb_mounted
     elif [ "$ADB_MODE" = "2" ]; then
-        # Prevent init.usb.configfs.rc from stopping adbd or re-binding ffs.adb
+        # Prevent init.usb.configfs.rc from stopping adbd or re-binding ffs.adb,
+        # and unmount /dev/usb-ffs/adb so adbd does not loop on FUNCTIONFS_BIND timeouts.
         setprop sys.usb.config hid 2>/dev/null || true
         setprop sys.usb.state hid 2>/dev/null || true
-        if [ "$FORCE_HID_ONLY" = "0" ]; then
-            umount -l /dev/usb-ffs/adb 2>/dev/null || true
-        fi
+        umount -l /dev/usb-ffs/adb 2>/dev/null || true
     else
         setprop sys.usb.config none 2>/dev/null || true
         setprop sys.usb.state none 2>/dev/null || true

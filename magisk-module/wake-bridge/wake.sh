@@ -29,8 +29,13 @@ acquire_wake_lock() {
 acquire_wake_lock || exit 0
 echo "wake_bridge_trigger" > /sys/power/wake_lock 2>/dev/null
 
-# Always fast-verify gadget configfs state before waking
-"$MOD_WAKE_DIR/setup-hid.sh" >/dev/null 2>&1 || true
+# Only run setup-hid.sh before waking if /dev/hidg0 is missing or UDC is unbound.
+# Never unbind UDC or alter ConfigFS while the host is in S3 suspend, as dropping D+
+# termination destroys the suspended USB link ("device firmware changed") and prevents Remote Wakeup.
+CUR_UDC="$($BB cat /config/usb_gadget/g1/UDC 2>/dev/null)"
+if [ ! -c /dev/hidg0 ] || [ -z "$CUR_UDC" ]; then
+    "$MOD_WAKE_DIR/setup-hid.sh" >/dev/null 2>&1 || true
+fi
 
 STATE_BEFORE="$($BB cat "$STATE_FILE" 2>/dev/null || echo unknown)"
 HID_STATUS="skipped"
@@ -40,7 +45,7 @@ send_lshift() {
     write_hid_b64 "AgAAAAAAAAA=" 2 && $BB usleep 150000 && write_hid_b64 "AAAAAAAAAAA=" 2
 }
 
-# Send Left Shift press & release (safe even if host is already awake)
+# Send Left Shift press & release immediately (triggers usb_gadget_wakeup on suspended bus)
 if [ -c /dev/hidg0 ]; then
     if send_lshift; then
         HID_STATUS="ok"
@@ -66,29 +71,24 @@ if [ "$STATE_BEFORE" = "configured" ] && [ "$HID_STATUS" != "ok" ]; then
     fi
 fi
 
-$BB sleep 2
-STATE_MID="$($BB cat "$STATE_FILE" 2>/dev/null || echo unknown)"
-
-# If host just resumed into configured state from sleep, send one more keystroke to wake display
-if [ "$STATE_BEFORE" != "configured" ] && [ "$STATE_MID" = "configured" ] && [ "$HID_STATUS" != "ok" ]; then
-    if send_lshift; then
-        HID_STATUS="ok"
-    fi
-fi
-
-# Fallback: if host stayed suspended or not attached, trigger USB soft_connect re-enumeration
-if [ "$STATE_MID" = "suspended" ] || [ "$STATE_MID" = "not attached" ]; then
-    if [ -e "$SOFT_CONN" ]; then
-        echo disconnect > "$SOFT_CONN" 2>/dev/null
-        $BB sleep 1
-        echo connect > "$SOFT_CONN" 2>/dev/null
-        $BB sleep 2
-        SOFT_STATUS="reconnected"
+# If host was sleeping (not configured), wait up to 3s for host to resume to configured state
+if [ "$STATE_BEFORE" != "configured" ]; then
+    WAIT_RESUME=0
+    while [ "$WAIT_RESUME" -lt 6 ]; do
+        STATE_MID="$($BB cat "$STATE_FILE" 2>/dev/null || echo unknown)"
+        [ "$STATE_MID" = "configured" ] && break
+        $BB usleep 500000
+        WAIT_RESUME=$((WAIT_RESUME + 1))
+    done
+    if [ "$STATE_MID" = "configured" ]; then
         if send_lshift; then
             HID_STATUS="ok"
         fi
     else
-        SOFT_STATUS="soft_connect_unavailable"
+        # Try one more HID wakeup pulse without disconnecting UDC/soft_connect
+        if send_lshift; then
+            HID_STATUS="ok"
+        fi
     fi
 fi
 
