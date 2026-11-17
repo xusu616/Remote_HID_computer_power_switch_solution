@@ -9,6 +9,24 @@ LOG="$DATA_DIR/wake.log"
 STATE_FILE="/sys/class/udc/$UDC/state"
 SOFT_CONN="/sys/class/udc/$UDC/soft_connect"
 
+WAKE_LOCK_DIR="$DATA_DIR/wake.lock"
+acquire_wake_lock() {
+    local tries=0 lock_pid=""
+    while ! mkdir "$WAKE_LOCK_DIR" 2>/dev/null; do
+        lock_pid="$($BB cat "$WAKE_LOCK_DIR/pid" 2>/dev/null)"
+        if [ -n "$lock_pid" ] && ! kill -0 "$lock_pid" 2>/dev/null; then
+            rm -rf "$WAKE_LOCK_DIR"
+            continue
+        fi
+        tries=$((tries + 1))
+        [ "$tries" -ge 50 ] && return 1
+        $BB usleep 100000
+    done
+    echo "$$" > "$WAKE_LOCK_DIR/pid" 2>/dev/null || true
+    trap 'rm -rf "$WAKE_LOCK_DIR"; echo "wake_bridge_trigger" > /sys/power/wake_unlock 2>/dev/null' EXIT INT TERM
+}
+
+acquire_wake_lock || exit 0
 echo "wake_bridge_trigger" > /sys/power/wake_lock 2>/dev/null
 
 # Always fast-verify gadget configfs state before waking
@@ -33,18 +51,30 @@ else
     HID_STATUS="no_hidg0"
 fi
 
-# If USB is configured while host is awake yet HID write failed, UDC was likely bound without hid.usb0
+# If USB was already configured before waking yet HID write failed, retry once after 1s before forcing rebind
 if [ "$STATE_BEFORE" = "configured" ] && [ "$HID_STATUS" != "ok" ]; then
-    "$MOD_WAKE_DIR/setup-hid.sh" --force >/dev/null 2>&1 || true
     $BB sleep 1
-    SOFT_STATUS="rebound_hid"
     if send_lshift; then
         HID_STATUS="ok"
+    else
+        "$MOD_WAKE_DIR/setup-hid.sh" --force >/dev/null 2>&1 || true
+        $BB sleep 1
+        SOFT_STATUS="rebound_hid"
+        if send_lshift; then
+            HID_STATUS="ok"
+        fi
     fi
 fi
 
 $BB sleep 2
 STATE_MID="$($BB cat "$STATE_FILE" 2>/dev/null || echo unknown)"
+
+# If host just resumed into configured state from sleep, send one more keystroke to wake display
+if [ "$STATE_BEFORE" != "configured" ] && [ "$STATE_MID" = "configured" ] && [ "$HID_STATUS" != "ok" ]; then
+    if send_lshift; then
+        HID_STATUS="ok"
+    fi
+fi
 
 # Fallback: if host stayed suspended or not attached, trigger USB soft_connect re-enumeration
 if [ "$STATE_MID" = "suspended" ] || [ "$STATE_MID" = "not attached" ]; then
@@ -54,7 +84,9 @@ if [ "$STATE_MID" = "suspended" ] || [ "$STATE_MID" = "not attached" ]; then
         echo connect > "$SOFT_CONN" 2>/dev/null
         $BB sleep 2
         SOFT_STATUS="reconnected"
-        send_lshift || true
+        if send_lshift; then
+            HID_STATUS="ok"
+        fi
     else
         SOFT_STATUS="soft_connect_unavailable"
     fi
