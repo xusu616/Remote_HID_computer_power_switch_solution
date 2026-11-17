@@ -97,6 +97,17 @@ want_adb_in_gadget() {
 write_hid_b64() {
     local b64="$1"
     local timeout_secs="${2:-1}"
+    local oct=""
     [ -c /dev/hidg0 ] || return 1
-    $BB timeout "$timeout_secs" $BB sh -c "echo '$b64' | $BB base64 -d > /dev/hidg0" 2>/dev/null
+    case "$b64" in
+        AgAAAAAAAAA=) oct='\002\000\000\000\000\000\000\000' ;;
+        AAAAAAAAAAA=) oct='\000\000\000\000\000\000\000\000' ;;
+    esac
+    if [ -n "$oct" ]; then
+        # Use shell builtin printf directly without a pipeline so timeout SIGTERM
+        # kills the writer process itself and never leaves orphaned base64 processes.
+        $BB timeout "$timeout_secs" $BB sh -c "printf '$oct' > /dev/hidg0" 2>/dev/null
+    else
+        $BB timeout "$timeout_secs" $BB sh -c "echo '$b64' | exec $BB base64 -d > /dev/hidg0" 2>/dev/null
+    fi
 }

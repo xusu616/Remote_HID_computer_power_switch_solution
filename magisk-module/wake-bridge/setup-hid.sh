@@ -32,7 +32,7 @@ acquire_lock() {
             continue
         fi
         tries=$((tries + 1))
-        if [ "$tries" -ge 60 ]; then
+        if [ "$tries" -ge 200 ]; then
             rm -rf "$LOCK_DIR"
             mkdir "$LOCK_DIR" 2>/dev/null || return 1
             break
@@ -40,7 +40,8 @@ acquire_lock() {
         $BB usleep 50000
     done
     echo "$$" > "$LOCK_DIR/pid" 2>/dev/null || true
-    trap 'rm -rf "$LOCK_DIR"' EXIT INT TERM
+    trap 'rm -rf "$LOCK_DIR"' EXIT
+    trap 'rm -rf "$LOCK_DIR"; exit 130' INT TERM HUP
 }
 
 acquire_lock || exit 1
@@ -77,7 +78,9 @@ fi
 ensure_ffs_adb_mounted() {
     [ -e /dev/usb-ffs/adb/ep0 ] && return 0
     mkdir -p /dev/usb-ffs/adb 2>/dev/null || true
-    mount -t functionfs adb /dev/usb-ffs/adb -o uid=2000,gid=2000 2>/dev/null || true
+    mount -t functionfs adb /dev/usb-ffs/adb -o rmode=0770,fmode=0660,uid=2000,gid=2000,no_disconnect=1 2>/dev/null \
+        || mount -t functionfs adb /dev/usb-ffs/adb -o uid=2000,gid=2000 2>/dev/null \
+        || true
     [ -e /dev/usb-ffs/adb/ep0 ]
 }
 
@@ -161,27 +164,31 @@ SUCCESS=0
 while [ "$ATTEMPT" -le 3 ]; do
     if [ "$WANT_ADB" = "1" ]; then
         ensure_ffs_adb_mounted
-    elif [ "$ADB_MODE" = "2" ]; then
-        # Prevent init.usb.configfs.rc from stopping adbd or re-binding ffs.adb,
-        # and unmount /dev/usb-ffs/adb so adbd does not loop on FUNCTIONFS_BIND timeouts.
+    else
+        # Set sys.usb.config=hid (instead of none) so init.usb.configfs.rc neither
+        # re-links ffs.adb nor runs the sys.usb.config=none rule that deletes b.1/f1.
         setprop sys.usb.config hid 2>/dev/null || true
         setprop sys.usb.state hid 2>/dev/null || true
-        umount -l /dev/usb-ffs/adb 2>/dev/null || true
-    else
-        setprop sys.usb.config none 2>/dev/null || true
-        setprop sys.usb.state none 2>/dev/null || true
     fi
 
-    # Unlink hid.usb0 before updating descriptors
+    # Unlink hid.usb0 (and ffs.adb when WANT_ADB=0) before updating descriptors
     for f in "$CFG"/f*; do
         [ -L "$f" ] || continue
         case "$($BB readlink "$f" 2>/dev/null)" in
             *hid.usb0) rm -f "$f" ;;
+            *ffs.adb) [ "$WANT_ADB" = "0" ] && rm -f "$f" ;;
         esac
     done
 
     echo "" > "$G1/UDC" 2>/dev/null || true
     $BB usleep 100000
+
+    if [ "$WANT_ADB" = "0" ] && [ "$ADB_MODE" = "2" ]; then
+        # Wait briefly after unbinding UDC and unlinking ffs.adb so adbd closes ep0
+        # before unmounting functionfs (avoids -EBUSY if switching back to KEEP_ADB=1).
+        $BB usleep 150000
+        umount -l /dev/usb-ffs/adb 2>/dev/null || true
+    fi
 
     if [ -f "$HID_DIR/no_out_endpoint" ]; then
         echo 0 > "$HID_DIR/no_out_endpoint" 2>/dev/null || true

@@ -23,16 +23,25 @@ acquire_wake_lock() {
         $BB usleep 100000
     done
     echo "$$" > "$WAKE_LOCK_DIR/pid" 2>/dev/null || true
-    trap 'rm -rf "$WAKE_LOCK_DIR"; echo "wake_bridge_trigger" > /sys/power/wake_unlock 2>/dev/null' EXIT INT TERM
+    trap 'rm -rf "$WAKE_LOCK_DIR"; echo "wake_bridge_trigger" > /sys/power/wake_unlock 2>/dev/null' EXIT
+    trap 'rm -rf "$WAKE_LOCK_DIR"; echo "wake_bridge_trigger" > /sys/power/wake_unlock 2>/dev/null; exit 130' INT TERM HUP
 }
 
 acquire_wake_lock || exit 0
 echo "wake_bridge_trigger" > /sys/power/wake_lock 2>/dev/null
 
-# Only run setup-hid.sh before waking if /dev/hidg0 is missing or UDC is unbound.
 # Never unbind UDC or alter ConfigFS while the host is in S3 suspend, as dropping D+
 # termination destroys the suspended USB link ("device firmware changed") and prevents Remote Wakeup.
 CUR_UDC="$($BB cat /config/usb_gadget/g1/UDC 2>/dev/null)"
+if [ ! -c /dev/hidg0 ] && [ -r /config/usb_gadget/g1/functions/hid.usb0/dev ]; then
+    DEV_MM="$($BB cat /config/usb_gadget/g1/functions/hid.usb0/dev 2>/dev/null)"
+    MAJ="${DEV_MM%%:*}"
+    MIN="${DEV_MM##*:}"
+    if [ -n "$MAJ" ] && [ -n "$MIN" ]; then
+        mknod /dev/hidg0 c "$MAJ" "$MIN" 2>/dev/null || true
+        chmod 660 /dev/hidg0 2>/dev/null || true
+    fi
+fi
 if [ ! -c /dev/hidg0 ] || [ -z "$CUR_UDC" ]; then
     "$MOD_WAKE_DIR/setup-hid.sh" >/dev/null 2>&1 || true
 fi
@@ -42,7 +51,15 @@ HID_STATUS="skipped"
 SOFT_STATUS="not_needed"
 
 send_lshift() {
-    write_hid_b64 "AgAAAAAAAAA=" 2 && $BB usleep 150000 && write_hid_b64 "AAAAAAAAAAA=" 2
+    local rc=1
+    if write_hid_b64 "AgAAAAAAAAA=" 2; then
+        rc=0
+    fi
+    $BB usleep 150000
+    if ! write_hid_b64 "AAAAAAAAAAA=" 2; then
+        rc=1
+    fi
+    return "$rc"
 }
 
 # Send Left Shift press & release immediately (triggers usb_gadget_wakeup on suspended bus)
@@ -61,7 +78,7 @@ if [ "$STATE_BEFORE" = "configured" ] && [ "$HID_STATUS" != "ok" ]; then
     $BB sleep 1
     if send_lshift; then
         HID_STATUS="ok"
-    else
+    elif [ "$($BB cat "$STATE_FILE" 2>/dev/null)" = "configured" ]; then
         "$MOD_WAKE_DIR/setup-hid.sh" --force >/dev/null 2>&1 || true
         $BB sleep 1
         SOFT_STATUS="rebound_hid"
@@ -95,7 +112,7 @@ fi
 STATE_AFTER="$($BB cat "$STATE_FILE" 2>/dev/null || echo unknown)"
 TS="$($BB date "+%Y-%m-%d %H:%M:%S")"
 echo "$TS before=$STATE_BEFORE hid=$HID_STATUS soft=$SOFT_STATUS after=$STATE_AFTER" >> "$LOG"
-$BB tail -n 200 "$LOG" > "$LOG.tmp" 2>/dev/null && mv "$LOG.tmp" "$LOG"
+$BB tail -n 200 "$LOG" > "$LOG.tmp.$$" 2>/dev/null && mv "$LOG.tmp.$$" "$LOG"
 
 echo "wake_bridge_trigger" > /sys/power/wake_unlock 2>/dev/null
 

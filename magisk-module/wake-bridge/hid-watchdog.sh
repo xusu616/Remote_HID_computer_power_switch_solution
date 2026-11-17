@@ -21,6 +21,7 @@ log_wd() {
     local ts
     ts="$($BB date '+%Y-%m-%d %H:%M:%S' 2>/dev/null)"
     echo "[$ts] $*" >> "$LOG_FILE" 2>/dev/null || true
+    $BB tail -n 200 "$LOG_FILE" > "$LOG_FILE.tmp.$$" 2>/dev/null && mv "$LOG_FILE.tmp.$$" "$LOG_FILE" 2>/dev/null || true
 }
 
 has_hid_link() {
@@ -65,7 +66,6 @@ while true; do
 
     # Respect post-repair cooldown unless KEEP_ADB config just changed
     if [ "$NOW" -lt "$COOLDOWN_UNTIL" ]; then
-        LAST_KEEP_ADB="$CUR_KEEP_ADB"
         sleep_interruptible 2
         continue
     fi
@@ -74,7 +74,6 @@ while true; do
     # unless Android init completely cleared UDC.
     if [ "$CUR_STATE" != "configured" ] && [ -n "$CUR_UDC" ]; then
         FAIL_STREAK=0
-        LAST_KEEP_ADB="$CUR_KEEP_ADB"
         sleep_interruptible 2
         continue
     fi
