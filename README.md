@@ -9,6 +9,7 @@
 
 ## 快速使用
 
+~~可能你需要关闭手机密码？~~
 1. 检查手机内核支持 `CONFIG_USB_F_HID=y`（`zcat /proc/config.gz | grep USB_F_HID`）。
 2. 在 [GitLab Releases](https://gitlab.com/xusu616/remote_hid_computer_power_switch_solution/-/releases) 下载模块 ZIP 刷入 Magisk 并重启（或运行 `python3 scripts/build-module.py` 打包）。
 3. 手机安装并登录 Tailscale（设电池无限制、锁定后台、取消锁屏密码），建议配合 ACC 模块设置 `acc 60 40`。
