@@ -4,7 +4,7 @@
 
 将已 Root 的安卓手机通过 Magisk 模块配合 Tailscale 接入远程 Linux 主机 USB 口，模拟 HID 键盘（含 `soft_connect` 软重连兜底），远程唤醒处于 S3 / `s2idle` 挂起状态的电脑。
 
-详细原理、踩坑记录与实操说明见博客文章：
+详见博客文章：
 * [用 Root 安卓机做 Tailscale 远程 USB HID 唤醒器](https://xusu616.gitlab.io/2026/11/15/remote-hid-computer-power-switch-solution/)
 
 ## 快速使用
