@@ -3,6 +3,15 @@ MOD_WAKE_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 . "$MOD_WAKE_DIR/common.sh"
 load_config
 
+# Explicit device compatibility setting, not a project-owned USB product ID.
+if [ -n "${USB_PRODUCT_ID:-}" ]; then
+    if ! printf '%s\n' "$USB_PRODUCT_ID" | $BB grep -Eq '^0x[0-9a-fA-F]{4}$'; then
+        echo "wake_bridge: USB_PRODUCT_ID must be empty or 0x followed by four hexadecimal digits" >&2
+        exit 1
+    fi
+    USB_PRODUCT_ID="$(printf '%s' "$USB_PRODUCT_ID" | $BB tr 'A-F' 'a-f')"
+fi
+
 FORCE=0
 FORCE_HID_ONLY=0
 for arg in "$@"; do
@@ -20,7 +29,7 @@ DESC_B64="BQEJBqEBBQcZ4CnnFQAlAXUBlQiBApUBdQiBAZUGdQgVACVlBQcZACllgQDA"
 UDC="$(detect_udc)" || exit 1
 CFG="$(detect_usb_cfg)" || exit 1
 
-mkdir -p "$DATA_DIR" "$HID_DIR"
+mkdir -p "$DATA_DIR"
 
 LOCK_DIR="$DATA_DIR/setup.lock"
 acquire_lock() {
@@ -45,6 +54,20 @@ acquire_lock() {
 }
 
 acquire_lock || exit 1
+
+check_usb_state_before_rebuild() {
+    local usb_state
+    if ! usb_state="$($BB cat "/sys/class/udc/$UDC/state")"; then
+        echo "wake_bridge: 无法读取 USB 控制器状态，请检查 UDC 配置、状态节点和 root 权限" >&2
+        return 1
+    fi
+    if [ "$usb_state" = "suspended" ]; then
+        echo "wake_bridge: 电脑的 USB 已挂起，请先唤醒电脑再修复 ADB/HID" >&2
+        return 2
+    fi
+}
+check_usb_state_before_rebuild || exit $?
+mkdir -p "$HID_DIR" || exit 1
 
 ensure_hidg_dev() {
     [ -r "$HID_DIR/dev" ] || return 1
@@ -93,9 +116,8 @@ wait_for_adbd_ffs_ready() {
         setprop ctl.start adbd 2>/dev/null || true
     fi
     while [ "$tries" -lt 15 ]; do
-        if [ "$(getprop sys.usb.ffs.ready 2>/dev/null)" = "1" ]; then
-            # Allow init.usb.configfs.rc property trigger (if any) to settle
-            $BB usleep 50000
+        if [ "$(getprop sys.usb.ffs.ready 2>/dev/null)" = "1" ] && [ "$(getprop sys.usb.state 2>/dev/null)" = "adb" ]; then
+            # Android init has finished its stock ADB binding and identity writes.
             return 0
         fi
         $BB usleep 100000
@@ -120,6 +142,13 @@ is_gadget_ready() {
 
     [ "$hid_linked" = "1" ] || return 1
     [ "$adb_linked" = "$WANT_ADB" ] || return 1
+    case "$($BB readlink "$CFG/f1" 2>/dev/null)" in *hid.usb0) ;; *) return 1 ;; esac
+    if [ "$WANT_ADB" = "1" ]; then
+        case "$($BB readlink "$CFG/f2" 2>/dev/null)" in *ffs.adb) ;; *) return 1 ;; esac
+    fi
+    if [ -n "${USB_PRODUCT_ID:-}" ]; then
+        [ "$($BB cat "$G1/idProduct" 2>/dev/null)" = "$USB_PRODUCT_ID" ] || return 1
+    fi
     [ "$other_linked" = "0" ] || return 1
     [ "$cur_bm" = "0xa0" ] || return 1
     [ "$cur_udc" = "$UDC" ] || return 1
@@ -131,39 +160,27 @@ if [ "$FORCE" = "0" ] && is_gadget_ready && ensure_hidg_dev; then
 fi
 
 apply_gadget_links() {
-    local f before_hid_udc
+    # Creation order determines USB interface numbers: HID=0, ADB=1.
+    # The Windows ADB driver must own its interface, not the composite parent.
+    local f
+    for f in "$CFG"/f*; do
+        [ -L "$f" ] && rm -f "$f"
+    done
+    ln -s "$HID_DIR" "$CFG/f1" || return 1
     if [ "$WANT_ADB" = "1" ]; then
-        for f in "$CFG"/f*; do
-            [ -L "$f" ] || continue
-            case "${f##*/}" in
-                f1)
-                    case "$($BB readlink "$f" 2>/dev/null)" in
-                        *ffs.adb) ;;
-                        *) rm -f "$f" ;;
-                    esac
-                    ;;
-                *) rm -f "$f" ;;
-            esac
-        done
-        [ -L "$CFG/f1" ] || ln -s "$G1/functions/ffs.adb" "$CFG/f1"
-        before_hid_udc="$($BB cat "$G1/UDC" 2>/dev/null)"
-        ln -s "$HID_DIR" "$CFG/f2"
-    else
-        for f in "$CFG"/f*; do
-            [ -L "$f" ] && rm -f "$f"
-        done
-        before_hid_udc="$($BB cat "$G1/UDC" 2>/dev/null)"
-        ln -s "$HID_DIR" "$CFG/f1"
+        ln -s "$G1/functions/ffs.adb" "$CFG/f2" || return 1
     fi
-    # If Android init bound UDC before hid.usb0 was linked, force a clean rebind below
-    [ -z "$before_hid_udc" ]
+    [ -z "$($BB cat "$G1/UDC" 2>/dev/null)" ]
 }
 
 ATTEMPT=1
 SUCCESS=0
 while [ "$ATTEMPT" -le 3 ]; do
     if [ "$WANT_ADB" = "1" ]; then
-        ensure_ffs_adb_mounted
+        if ! ensure_ffs_adb_mounted || ! wait_for_adbd_ffs_ready; then
+            echo "wake_bridge: Android ADB initialization did not complete; USB gadget was not rebuilt" >&2
+            exit 1
+        fi
     else
         # Set sys.usb.config=hid (instead of none) so init.usb.configfs.rc neither
         # re-links ffs.adb nor runs the sys.usb.config=none rule that deletes b.1/f1.
@@ -171,16 +188,16 @@ while [ "$ATTEMPT" -le 3 ]; do
         setprop sys.usb.state hid 2>/dev/null || true
     fi
 
-    # Unlink hid.usb0 (and ffs.adb when WANT_ADB=0) before updating descriptors
+    # The host can suspend while Android ADB initialization is being awaited.
+    check_usb_state_before_rebuild || exit $?
+    # ConfigFS function links and descriptors may only change after unbinding.
+    if ! echo "" > "$G1/UDC"; then
+        echo "wake_bridge: cannot unbind USB before rebuilding HID" >&2
+        exit 1
+    fi
     for f in "$CFG"/f*; do
-        [ -L "$f" ] || continue
-        case "$($BB readlink "$f" 2>/dev/null)" in
-            *hid.usb0) rm -f "$f" ;;
-            *ffs.adb) [ "$WANT_ADB" = "0" ] && rm -f "$f" ;;
-        esac
+        [ -L "$f" ] && rm -f "$f"
     done
-
-    echo "" > "$G1/UDC" 2>/dev/null || true
     $BB usleep 100000
 
     if [ "$WANT_ADB" = "0" ] && [ "$ADB_MODE" = "2" ]; then
@@ -214,12 +231,12 @@ while [ "$ATTEMPT" -le 3 ]; do
         fi
     fi
 
-    if [ "$WANT_ADB" = "1" ]; then
-        # Start adbd and wait up to 1.5s for sys.usb.ffs.ready=1 BEFORE binding UDC
-        # so HID does not enumerate ahead of adbd and get reset mid-handshake.
-        wait_for_adbd_ffs_ready || true
-        [ -L "$CFG/f1" ] || ln -s "$G1/functions/ffs.adb" "$CFG/f1" 2>/dev/null || true
-        [ -L "$CFG/f2" ] || ln -s "$HID_DIR" "$CFG/f2" 2>/dev/null || true
+    # Do not re-run the Android ADB init trigger after arranging our interfaces.
+    if [ -n "${USB_PRODUCT_ID:-}" ]; then
+        if ! echo "$USB_PRODUCT_ID" > "$G1/idProduct"; then
+            echo "wake_bridge: cannot apply the configured USB product ID" >&2
+            exit 1
+        fi
     fi
 
     echo 0xa0 > "$CFG/bmAttributes" 2>/dev/null || true

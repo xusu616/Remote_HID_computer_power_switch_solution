@@ -18,4 +18,21 @@ for pid in $($BB ps -o pid,args 2>/dev/null | $BB awk '
     [ "$pid" != "$$" ] && [ "$pid" != "$PPID" ] && kill "$pid" 2>/dev/null
 done
 
-echo "wake_bridge_daemon" > /sys/power/wake_unlock 2>/dev/null
+rm -f "$DATA_DIR/daemon-wake-lock-mode"
+if [ -e /sys/power/wake_lock ]; then
+    if ! ACTIVE_WAKE_LOCKS="$($BB cat /sys/power/wake_lock)"; then
+        echo "wake_bridge: cannot read active wake locks while stopping daemon" >&2
+        exit 1
+    fi
+    DAEMON_LOCK_ACTIVE=0
+    for LOCK_NAME in $ACTIVE_WAKE_LOCKS; do
+        [ "$LOCK_NAME" = "wake_bridge_daemon" ] && DAEMON_LOCK_ACTIVE=1
+    done
+    if [ "$DAEMON_LOCK_ACTIVE" = "1" ]; then
+        if ! echo "wake_bridge_daemon" > /sys/power/wake_unlock; then
+            echo "wake_bridge: cannot release daemon wake lock" >&2
+            exit 1
+        fi
+    fi
+fi
+exit 0
