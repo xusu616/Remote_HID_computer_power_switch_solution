@@ -13,6 +13,7 @@ if [ -c /dev/hidg0 ]; then echo "hidg0=present"; else echo "hidg0=missing"; fi
 echo "battery_capacity=$($BB cat /sys/class/power_supply/battery/capacity 2>/dev/null)%"
 echo "charging_enabled=$($BB cat /sys/class/power_supply/battery/charging_enabled 2>/dev/null)"
 echo "battery_status=$($BB cat /sys/class/power_supply/battery/status 2>/dev/null)"
+print_power_status
 echo "--- network ---"
 ip -br addr 2>/dev/null | $BB grep -E "^(wlan|tun)" || true
 echo "--- recent wake.log ---"

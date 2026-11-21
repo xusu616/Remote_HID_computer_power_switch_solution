@@ -2,6 +2,8 @@
 # Magisk / KernelSU / APatch customize.sh
 . "$MODPATH/wake-bridge/common.sh"
 
+[ -n "$BB" ] || abort "! BusyBox not found; cannot install wake_bridge"
+
 ui_print "- Checking kernel USB HID Gadget support..."
 if [ -r /proc/config.gz ] && [ -n "$BB" ]; then
     HID_CFG="$($BB zcat /proc/config.gz 2>/dev/null | $BB grep -E '^CONFIG_USB(_CONFIGFS)?_F_HID=' || true)"
@@ -121,14 +123,19 @@ ui_print "  -> Selected: KEEP_ADB=$(keep_adb_label "$SELECTED_KEEP_ADB")"
 
 if [ "$IS_UPGRADE" = "0" ]; then
     RAND_TOKEN="$($BB dd if=/dev/urandom bs=12 count=1 2>/dev/null | $BB od -An -tx1 | $BB tr -d ' \n\r')"
-    [ -z "$RAND_TOKEN" ] && RAND_TOKEN="changeme1234567890abcdef"
+    case "$RAND_TOKEN" in
+        *[!0-9a-f]*|'') abort "! Failed to generate a random authentication token" ;;
+    esac
+    [ "${#RAND_TOKEN}" -eq 24 ] || abort "! Random authentication token must contain 24 hexadecimal characters"
     cat > "$DATA_DIR/config.env" <<EOF
 PORT=9876
 TOKEN=$RAND_TOKEN
 TAILSCALE_ONLY=0
 KEEP_ADB=$SELECTED_KEEP_ADB
 AUTO_HID_ON_BOOT=1
+AUTO_TAILSCALE_ON_BOOT=1
 HID_WATCHDOG=1
+DAEMON_WAKE_LOCK=1
 UDC_NAME=
 USB_CONFIG=
 EOF
@@ -141,10 +148,20 @@ else
     fi
     ui_print "- Updated KEEP_ADB=$SELECTED_KEEP_ADB in existing $DATA_DIR/config.env"
 fi
+if ! $BB grep -q '^DAEMON_WAKE_LOCK=' "$DATA_DIR/config.env"; then
+    echo "DAEMON_WAKE_LOCK=1" >> "$DATA_DIR/config.env"
+fi
+if ! $BB grep -q '^AUTO_TAILSCALE_ON_BOOT=' "$DATA_DIR/config.env"; then
+    echo "AUTO_TAILSCALE_ON_BOOT=1" >> "$DATA_DIR/config.env"
+fi
+if ! $BB grep -q '^USB_PRODUCT_ID=' "$DATA_DIR/config.env"; then
+    echo "USB_PRODUCT_ID=" >> "$DATA_DIR/config.env"
+fi
 chmod 600 "$DATA_DIR/config.env"
 
 set_perm_recursive "$MODPATH" 0 0 0755 0644
 set_perm "$MODPATH/service.sh" 0 0 0755
+set_perm "$MODPATH/action.sh" 0 0 0755
 set_perm "$MODPATH/uninstall.sh" 0 0 0755
 set_perm "$MODPATH/system/bin/wake-bridge" 0 0 0755
 set_perm "$MODPATH/wake-bridge/common.sh" 0 0 0644
@@ -153,11 +170,15 @@ set_perm "$MODPATH/wake-bridge/setup-hid.sh" 0 0 0755
 set_perm "$MODPATH/wake-bridge/wake.sh" 0 0 0755
 set_perm "$MODPATH/wake-bridge/hid-watchdog.sh" 0 0 0755
 set_perm "$MODPATH/wake-bridge/start-daemon.sh" 0 0 0755
+set_perm "$MODPATH/wake-bridge/start-tailscale.sh" 0 0 0755
 set_perm "$MODPATH/wake-bridge/stop-daemon.sh" 0 0 0755
 set_perm "$MODPATH/wake-bridge/www/cgi-bin/wake" 0 0 0755
 set_perm "$MODPATH/wake-bridge/www/cgi-bin/status" 0 0 0755
 
 . "$DATA_DIR/config.env"
 ui_print "- Port: ${PORT:-9876}"
-ui_print "- Token: $TOKEN"
+ui_print "- Authentication token retained in protected config; use wake-bridge url explicitly when needed"
+ui_print "- DAEMON_WAKE_LOCK: ${DAEMON_WAKE_LOCK:-1}; HID_WATCHDOG: ${HID_WATCHDOG:-1}"
+ui_print "- AUTO_TAILSCALE_ON_BOOT: ${AUTO_TAILSCALE_ON_BOOT:-1}"
+ui_print "- USB_PRODUCT_ID: ${USB_PRODUCT_ID:-ROM default}"
 ui_print "- Reboot to activate module, then run: su -c wake-bridge url"

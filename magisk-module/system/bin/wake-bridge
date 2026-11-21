@@ -50,15 +50,15 @@ case "$1" in
         ;;
     start)
         "$MOD_WAKE_DIR/start-daemon.sh"
-        echo "started"
         ;;
     stop)
         "$MOD_WAKE_DIR/stop-daemon.sh"
-        echo "stopped"
+        STOP_RESULT=$?
+        [ "$STOP_RESULT" -eq 0 ] && echo "stopped"
+        exit "$STOP_RESULT"
         ;;
     restart)
         "$MOD_WAKE_DIR/start-daemon.sh"
-        echo "restarted"
         ;;
     status|"")
         UDC="$(detect_udc)"
@@ -78,7 +78,7 @@ case "$1" in
         else
             echo "watchdog PID: not running"
         fi
-        print_urls
+        print_power_status
         ;;
     *)
         echo "Usage: wake-bridge {status|url|wake|hid [--force] [--hid-only]|adb [0|1|2|off|usb|wireless]|start|stop|restart}"

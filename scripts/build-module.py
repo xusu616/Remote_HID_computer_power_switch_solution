@@ -4,6 +4,7 @@
 import hashlib
 import os
 from pathlib import Path
+import shutil
 import stat
 import zipfile
 
@@ -12,18 +13,20 @@ EXEC_FILES = {
     "META-INF/com/google/android/update-binary",
     "customize.sh",
     "service.sh",
+    "action.sh",
     "uninstall.sh",
     "system/bin/wake-bridge",
     "wake-bridge/setup-hid.sh",
     "wake-bridge/wake.sh",
     "wake-bridge/hid-watchdog.sh",
     "wake-bridge/start-daemon.sh",
+    "wake-bridge/start-tailscale.sh",
     "wake-bridge/stop-daemon.sh",
     "wake-bridge/www/cgi-bin/wake",
     "wake-bridge/www/cgi-bin/status",
 }
 
-TEXT_EXTENSIONS = {".sh", ".prop", ".example", ".html", ""}
+TEXT_EXTENSIONS = {".sh", ".prop", ".example", ".html", ".md", ""}
 
 
 def parse_module_prop(prop_path: Path) -> dict[str, str]:
@@ -39,6 +42,7 @@ def parse_module_prop(prop_path: Path) -> dict[str, str]:
 
 def build_zip(repo_root: Path) -> Path:
     src_dir = repo_root / "magisk-module"
+    shutil.copyfile(repo_root / "README.md", src_dir / "README.md")
     props = parse_module_prop(src_dir / "module.prop")
     mod_id = props.get("id", "wake_bridge")
     version = props.get("version", "v1.0.0")

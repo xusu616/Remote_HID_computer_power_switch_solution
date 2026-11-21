@@ -111,3 +111,45 @@ write_hid_b64() {
         $BB timeout "$timeout_secs" $BB sh -c "echo '$b64' | exec $BB base64 -d > /dev/hidg0" 2>/dev/null
     fi
 }
+
+print_power_status() {
+    echo "daemon_wake_lock_config=${DAEMON_WAKE_LOCK:-1}"
+    echo "hid_watchdog_config=${HID_WATCHDOG:-1}"
+    echo "auto_tailscale_on_boot=${AUTO_TAILSCALE_ON_BOOT:-1}"
+    echo "usb_product_id_config=${USB_PRODUCT_ID:-rom_default}"
+    if [ -r "$DATA_DIR/tailscale-start-status" ]; then
+        echo "tailscale_last_start_result=$($BB cat "$DATA_DIR/tailscale-start-status")"
+    else
+        echo "tailscale_last_start_result=unrecorded"
+    fi
+    if [ -r /proc/uptime ]; then
+        echo "uptime=$($BB cat /proc/uptime)"
+    fi
+    if [ -r /sys/kernel/debug/suspend_stats ]; then
+        $BB awk '$1 == "success:" { print "suspend_success=" $2 } $1 == "fail:" { print "suspend_fail=" $2 }' /sys/kernel/debug/suspend_stats
+    else
+        echo "suspend_stats=unavailable"
+    fi
+    if [ -r "$DATA_DIR/daemon-wake-lock-mode" ]; then
+        echo "daemon_wake_lock_runtime=$($BB cat "$DATA_DIR/daemon-wake-lock-mode")"
+    else
+        echo "daemon_wake_lock_runtime=unrecorded"
+    fi
+
+    if [ ! -r /sys/power/wake_lock ]; then
+        echo "wake_locks_active=unavailable"
+        echo "daemon_wake_lock_active=unknown"
+        return
+    fi
+    if ! ACTIVE_WAKE_LOCKS="$($BB cat /sys/power/wake_lock)"; then
+        echo "wake_locks_active=read_error"
+        echo "daemon_wake_lock_active=unknown"
+        return
+    fi
+    DAEMON_LOCK_ACTIVE=0
+    for LOCK_NAME in $ACTIVE_WAKE_LOCKS; do
+        [ "$LOCK_NAME" = "wake_bridge_daemon" ] && DAEMON_LOCK_ACTIVE=1
+    done
+    echo "wake_locks_active=$ACTIVE_WAKE_LOCKS"
+    echo "daemon_wake_lock_active=$DAEMON_LOCK_ACTIVE"
+}
